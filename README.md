@@ -1,4 +1,4 @@
-# Hux Blog
+# Cwb Blog
 
 ### [View Live Hux Blog &rarr;](https://huangxuan.me)
 
@@ -32,7 +32,7 @@ $ git clone git@github.com:Huxpro/huxblog-boilerplate.git
 
 - Annoyed to delete my blog post after clone or pull? **Boilerplate** comes to help you get started quickly and easily merge update.
 - `-apple-system` is added in font rule, which display beautiful new font **San Francisco** in iOS 9 by default.
-- Fixed [issue#15](https://github.com/Huxpro/huxpro.github.io/issues/15) about code wrap.
+- Fixed [issue#15]() about code wrap.
 
 ##### New Feature (V1.5.1)
 
@@ -52,11 +52,7 @@ $ git clone git@github.com:Huxpro/huxblog-boilerplate.git
 - Support **PingFang (苹方)**, the new Chinese font presented by [OS X El Capitan](http://www.apple.com/cn/osx/whats-new/)
 
 
-##### New Feature (V1.3)
 
-- Big Improvement to the **Navigation Menu** *(especially in Android)*:  Dropping the old, stuttering, low-performance [Bootstrap collapse.js](http://getbootstrap.com/javascript/#collapse),  replaced with an own wrote, [jank free](http://jankfree.org/) navbar menu in a pretty high-performance implementation of [Google Material Design](https://www.google.com/design/spec/material-design/introduction.html).
-
-<img src="http://huangxuan.me/img/blog-md-navbar.gif" width="320" />
 
 
 ##### New Feature (V1.2)
@@ -156,8 +152,6 @@ tags:
 ```
 
 #### SideBar
-
-![](http://huangxuan.me/img/blog-sidebar.jpg)
 
 Seeing more information may be necessary for you to display, from V1.1, a clean, gorgeous **SideBar** is added for you, which provide more area for displaying possible modules. You can enable *(it is default enable)* this feature by simply config:
 
@@ -291,13 +285,6 @@ Seeing the title text above image is **white**, the image should be **dark** to 
 In technical views, it can be done with CSS. However, the opacity of the black overlay is really hard to assigned, **every image has different brightness so the  degree it should be adjusted is different so it is impossible to hard code it.**
 
 
-#### SEO Title
-
-Before V1.4, site setting `title` is not only used for displayed in Home Page and Navbar, but also used to generate the `<title>` in HTML.
-It's possible that you want the two things different. For me, my site-title is **“Hux Blog”** but I want the title shows in search engine is **“黄玄的博客 | Hux Blog”** which is multi-language.
-
-So, the SEO Title is introduced to solve this problem, you can set `SEOTitle` different from `title`, and it would be only used to generate HTML `<title>` and setting DuoShuo Sharing.
-
 #### Page Build Warning
 
 There are many possible reasons to cause a "Page Build Warning" email or similar error.
@@ -313,7 +300,4 @@ For other circumstances, check out existing issues or create a new one!
 ## License
 
 Apache License 2.0.
-Copyright (c) 2015-2016 Huxpro
-
-Hux Blog is derived from [Clean Blog Jekyll Theme (MIT License)](https://github.com/BlackrockDigital/startbootstrap-clean-blog-jekyll/)
-Copyright (c) 2013-2016 Blackrock Digital LLC.
+Copyright (c) 2015-2016 
