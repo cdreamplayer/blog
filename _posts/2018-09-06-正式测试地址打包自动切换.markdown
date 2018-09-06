@@ -1,7 +1,7 @@
-#android studio的debug和release模式下使用不同的Http前缀进行测试与正式环境的自动切换
+# android studio的debug和release模式下使用不同的Http前缀进行测试与正式环境的自动切换
 
 
-我写代码的时候一般会使用两个环境，一个是测试环境，一个是正式环境并且这个两个环境的http请求连接地址的前缀肯定是不一样的
+在项目开发过程中一般会使用两种Url环境，一个是测试环境，一个是正式环境并且这个两个环境的http请求连接地址的前缀肯定是不一样的。
 
 例如，测试环境我们使用http://192.168.1.1:8080作为请求前缀
 
@@ -11,13 +11,13 @@
 
 安卓的机制中有一个变量用来区分正式和测试环境，我们可以拿到这个变量然后对他进行判断就可以自动去根据模式来改变url地址前缀
 
-##使用变量BuildConfig.DEBUG(debug模式返回true，release模式返回false)
+## 使用变量BuildConfig.DEBUG(debug模式返回true，release模式返回false)
 
 位置：app->build->generated->source->buildCofig->debug->BuildConfig文件，如图：
 
-在用的时候我们会定义一个全局的HttpUrl.myurl
+#### 在用的时候我们会定义一个全局的Url地址。
 
-###我们写一个三木运算就可以得到想要的分环境的不同url
+### 我们写一个三木运算就可以得到想要的分环境的不同url
 ### BuildConfig.DEBUG? 测试地址: 正式地址
 
 这样使用release打包出来的应用就是会使用正式的url前缀，测试的时候run app默认是使用就是debug，所以就解决了使用地址错的的问题了
