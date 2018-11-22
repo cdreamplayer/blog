@@ -1,11 +1,20 @@
-# android studio的debug和release模式下使用不同的Http前缀进行测试与正式环境的自动切换
+---
+layout:     post
+title:      "正式环境测试环境自动切换"
+date:       2018-09-6 12:00:00
+author:     "Cwb"
+header-img: "img/post-bg-miui6.jpg"
+tags:
+    - 开发
+    - Android
+---
+
+## android studio的debug和release模式下使用不同的Http前缀进行测试与正式环境的自动切换
 
 
 在项目开发过程中一般会使用两种Url环境，一个是测试环境，一个是正式环境并且这个两个环境的http请求连接地址的前缀肯定是不一样的。
 
-例如，测试环境我们使用http://192.168.1.1:8080作为请求前缀
-
-           正式环境我们则使用域名 http://www.baidu.com作为请求前缀
+例如，测试环境我们使用http://192.168.1.1:8080 作为请求前缀，正式环境我们则使用域名 http://www.baidu.com 作为请求前缀。
 
 有时候在发布应用的时候由于疏忽大意没有改地址就发布了而导致应用无法正常使用，为了解决这个问题我们使用android studio的debug和release来自动切换
 
