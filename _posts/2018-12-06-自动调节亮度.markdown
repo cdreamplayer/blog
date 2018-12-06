@@ -1,6 +1,6 @@
 ---
 layout:     post
-title:      "正式环境测试环境自动切换"
+title:      "Android 亮度自动调节"
 date:       2018-09-6 12:00:00
 author:     "Cwb"
 header-img: "img/post-bg-miui6.jpg"
@@ -11,10 +11,6 @@ tags:
 ---
 
 #Android7.1 亮度自动调节
-2017年03月28日 15:01:51 Kitty_London 阅读数：6870 标签： Android  更多
-个人分类： Android系统
-版权声明：本文为博主原创文章，未经博主允许不得转载。	https://blog.csdn.net/Kitty_Landon/article/details/64128140
-自动背光在Android系统中属于display显示相关模块，具体是和Lights和Power交互比较多，Power控制其亮度，灭屏，暗屏以及自动背光设置开关等，Lights负责背光灯的背光亮度值的变化。
 
 1、代码主要涉及到frameworks/base/services/core/java/com/android/server/display 目录下的DisplayPowerController.java、AutomaticBrightnessController.java。
 
