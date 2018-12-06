@@ -10,8 +10,7 @@ tags:
     - Android
 ---
 
-
-Android7.1 亮度自动调节
+#Android7.1 亮度自动调节
 2017年03月28日 15:01:51 Kitty_London 阅读数：6870 标签： Android  更多
 个人分类： Android系统
 版权声明：本文为博主原创文章，未经博主允许不得转载。	https://blog.csdn.net/Kitty_Landon/article/details/64128140
