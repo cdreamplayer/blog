@@ -1,0 +1,678 @@
+---
+layout:     post
+title:      "正式环境测试环境自动切换"
+date:       2018-09-6 12:00:00
+author:     "Cwb"
+header-img: "img/post-bg-miui6.jpg"
+tags:
+	- 转载
+    - 设置
+    - Android
+---
+
+
+Android7.1 亮度自动调节
+2017年03月28日 15:01:51 Kitty_London 阅读数：6870 标签： Android  更多
+个人分类： Android系统
+版权声明：本文为博主原创文章，未经博主允许不得转载。	https://blog.csdn.net/Kitty_Landon/article/details/64128140
+自动背光在Android系统中属于display显示相关模块，具体是和Lights和Power交互比较多，Power控制其亮度，灭屏，暗屏以及自动背光设置开关等，Lights负责背光灯的背光亮度值的变化。
+
+1、代码主要涉及到frameworks/base/services/core/java/com/android/server/display 目录下的DisplayPowerController.java、AutomaticBrightnessController.java。
+
+2、AutomaticBrightnessController.java中的一些变量
+
+mScreenAutoBrightness：屏幕亮度级别是由自动亮度算法决定的，实际的亮度应向这个值靠拢。我们保留这个值，即使我们停止使用光传感器，以便我们可以快速恢复到之前的自动亮度级别。如果当前没有可用的自动亮度值，设置为-1。
+
+    // The screen brightness level that has been chosen by the auto-brightness
+    // algorithm.  The actual brightness should ramp towards this value.
+    // We preserve this value even when we stop using the light sensor so
+    // that we can quickly revert to the previous auto-brightness level
+    // while the light sensor warms up.
+    // Use -1 if there is no current auto-brightness value available.
+    private int mScreenAutoBrightness = -1;
+mResetAmbientLuxAfterWarmUpConfig：如果设置为true，屏幕点亮后，控制器根据当前传感器读到的值调整亮度；如果是false，控制器将收集更多的数据，然后决定是否改变亮度。
+    // If true immediately after the screen is turned on the controller will try to adjust the
+    // brightness based on the current sensor reads. If false, the controller will collect more data
+    // and only then decide whether to change brightness.
+    private final boolean mResetAmbientLuxAfterWarmUpConfig;
+
+mScreenAutoBrightnessAdjustment：屏幕自动亮度调节的系数，从-1到1。
+    // The screen auto-brightness adjustment factor in the range -1 (dimmer) to 1 (brighter)
+    private float mScreenAutoBrightnessAdjustment = 0.0f;
+mAmbientLux：当前接收的环境光级别。
+
+    // The currently accepted nominal ambient light level.
+    private float mAmbientLux;
+
+mAmbientLightRingBuffer：一个用来保存最近环境光传感器读值得环形传感器。
+    // A ring buffer containing all of the recent ambient light sensor readings.
+    private AmbientLightRingBuffer mAmbientLightRingBuffer;
+
+AMBIENT_LIGHT_PREDICTION_TIME_MILLIS：假定当前传感器读数超出当前时间的有效期，并且确保最后样本的权重非0，这反过来确保了总权重非0。
+    // How long the current sensor reading is assumed to be valid beyond the current time.
+    // This provides a bit of prediction, as well as ensures that the weight for the last sample is
+    // non-zero, which in turn ensures that the total weight is non-zero.
+    private static final long AMBIENT_LIGHT_PREDICTION_TIME_MILLIS = 100;
+
+mLightSensorWarmUpTimeConfig：亮屏后在等待光传感器准备时自动亮度调整时间，以毫秒为单位。该值在创建AutomaticBrightnessController对象时被赋值。
+    // Amount of time to delay auto-brightness after screen on while waiting for
+    // the light sensor to warm-up in milliseconds.
+    // May be 0 if no warm-up is required.
+    private int mLightSensorWarmUpTimeConfig;
+
+mAmbientLightHorizen：以毫秒为单位，采集光样本的时间段。mAmbientLightHorizen的初始化在AutomaticBrightnessController的构造方法中，而AutomaticBrightnessController对象的创建是在DisplayPowerController类的构造方法中执行的，最终是从变量config_autoBrightnessAmbientLightHorizon中读取，定义在framework/base/core/res/res/values/config.xml文件中：<integer name="config_autoBrightnessAmbientLightHorizon">10000</integer>，这里定义为10s。
+    // Period of time in which to consider light samples in milliseconds.
+    private final int mAmbientLightHorizon;
+
+mInitialHorizonAmbientLightRingBuffer：保存初始阶段光传感器读值得环形缓冲器。
+    // A ring buffer containing the light sensor readings for the initial horizon period.
+    private AmbientLightRingBuffer mInitialHorizonAmbientLightRingBuffer;
+3、使用dump查看自动亮度调节的变量值
+
+
+adb shell dumpsys display > e:\display.txt
+4、亮度计算算法及调节
+
+
+自动背光的主要控制功能是DisplayPowerController和AutomaticBrightnessController两个类结合起来工作的。DisplayPowerController属于Display模块，其控制设备屏幕亮灭、背光、与Power关系密切，这里主要看下屏幕亮度的控制这方面的逻辑。
+
+首先，在DisplayManagerService中初始化DisplayPowerController，如下：
+
+    private final class LocalService extends DisplayManagerInternal {
+        @Override
+        public void initPowerManagement(final DisplayPowerCallbacks callbacks, Handler handler,
+                SensorManager sensorManager) {
+            synchronized (mSyncRoot) {
+                DisplayBlanker blanker = new DisplayBlanker() {
+                    @Override
+                    public void requestDisplayState(int state, int brightness) {
+                        // The order of operations is important for legacy reasons.
+                        if (state == Display.STATE_OFF) {
+                            requestGlobalDisplayStateInternal(state, brightness);
+                        }
+ 
+                        callbacks.onDisplayStateChange(state);
+ 
+                        if (state != Display.STATE_OFF) {
+                            requestGlobalDisplayStateInternal(state, brightness);
+                        }
+                    }
+                };
+                mDisplayPowerController = new DisplayPowerController(
+                        mContext, callbacks, handler, sensorManager, blanker);
+            }
+        }
+initPowerManagement()方法是比较重要的，这里是重写了DisplayManagerInternal中的initPowerManagement()抽象方法，该方法中有两个重要作用：一是回调到PowerManagerService中设置屏幕显示状态与power状态到底层；二是向LightService里面去设置屏幕背光。其中使用到的参数是由在PowerManagerService中调用initPowerManagement()方法传递的，如下：
+
+            // Initialize display power management.
+            mDisplayManagerInternal.initPowerManagement(
+                    mDisplayPowerCallbacks, mHandler, sensorManager);
+我们接着看下DisplayPowerController的构造方法，如下：
+    /**
+     * Creates the display power controller.
+     */
+    public DisplayPowerController(Context context,
+            DisplayPowerCallbacks callbacks, Handler handler,
+            SensorManager sensorManager, DisplayBlanker blanker) {
+        mHandler = new DisplayControllerHandler(handler.getLooper());
+        mCallbacks = callbacks;
+ 
+        mBatteryStats = BatteryStatsService.getService();
+        mSensorManager = sensorManager;
+        mWindowManagerPolicy = LocalServices.getService(WindowManagerPolicy.class);
+        mBlanker = blanker;
+        mContext = context;
+ 
+        final Resources resources = context.getResources();
+        final int screenBrightnessSettingMinimum = clampAbsoluteBrightness(resources.getInteger(
+                com.android.internal.R.integer.config_screenBrightnessSettingMinimum));//屏幕最小亮度值，设置过小可能会点不亮屏幕。（23）
+ 
+        mScreenBrightnessDozeConfig = clampAbsoluteBrightness(resources.getInteger(
+                com.android.internal.R.integer.config_screenBrightnessDoze));//处于doze状态时的屏幕亮度.（1）
+ 
+        mScreenBrightnessDimConfig = clampAbsoluteBrightness(resources.getInteger(
+                com.android.internal.R.integer.config_screenBrightnessDim));//屏幕变暗时的值。（23）
+ 
+        mScreenBrightnessDarkConfig = clampAbsoluteBrightness(resources.getInteger(
+                com.android.internal.R.integer.config_screenBrightnessDark));//屏幕完全黑暗时的值。（23）
+        if (mScreenBrightnessDarkConfig > mScreenBrightnessDimConfig) {
+            Slog.w(TAG, "Expected config_screenBrightnessDark ("
+                    + mScreenBrightnessDarkConfig + ") to be less than or equal to "
+                    + "config_screenBrightnessDim (" + mScreenBrightnessDimConfig + ").");
+        }
+        if (mScreenBrightnessDarkConfig > mScreenBrightnessDimConfig) {
+            Slog.w(TAG, "Expected config_screenBrightnessDark ("
+                    + mScreenBrightnessDarkConfig + ") to be less than or equal to "
+                    + "config_screenBrightnessSettingMinimum ("
+                    + screenBrightnessSettingMinimum + ").");
+        }
+ 
+        int screenBrightnessRangeMinimum = Math.min(Math.min(
+                screenBrightnessSettingMinimum, mScreenBrightnessDimConfig),
+                mScreenBrightnessDarkConfig);//取三个值中的最小值
+ 
+        mScreenBrightnessRangeMaximum = PowerManager.BRIGHTNESS_ON;//屏幕最大亮度
+ 
+        mUseSoftwareAutoBrightnessConfig = resources.getBoolean(
+                com.android.internal.R.bool.config_automatic_brightness_available);//是否支持自动亮度，false
+ 
+        mAllowAutoBrightnessWhileDozingConfig = resources.getBoolean(
+                com.android.internal.R.bool.config_allowAutoBrightnessWhileDozing);// false
+ 
+        mBrightnessRampRateFast = resources.getInteger(
+                com.android.internal.R.integer.config_brightness_ramp_rate_fast);// 亮度渐变动画速率，较快的亮度速率，200
+ 
+        int lightSensorRate = resources.getInteger(
+                com.android.internal.R.integer.config_autoBrightnessLightSensorRate);// 250
+        long brighteningLightDebounce = resources.getInteger(
+                com.android.internal.R.integer.config_autoBrightnessBrighteningLightDebounce);// 2000
+        long darkeningLightDebounce = resources.getInteger(
+                com.android.internal.R.integer.config_autoBrightnessDarkeningLightDebounce);// 4000
+        boolean autoBrightnessResetAmbientLuxAfterWarmUp = resources.getBoolean(
+                com.android.internal.R.bool.config_autoBrightnessResetAmbientLuxAfterWarmUp);// true
+        int ambientLightHorizon = resources.getInteger(
+                com.android.internal.R.integer.config_autoBrightnessAmbientLightHorizon);// 10000
+        float autoBrightnessAdjustmentMaxGamma = resources.getFraction(
+                com.android.internal.R.fraction.config_autoBrightnessAdjustmentMaxGamma,
+                1, 1);// 300%
+ 
+        if (mUseSoftwareAutoBrightnessConfig) {
+            int[] lux = resources.getIntArray(
+                    com.android.internal.R.array.config_autoBrightnessLevels);
+            int[] screenBrightness = resources.getIntArray(
+                    com.android.internal.R.array.config_autoBrightnessLcdBacklightValues);
+            int lightSensorWarmUpTimeConfig = resources.getInteger(
+                    com.android.internal.R.integer.config_lightSensorWarmupTime);// 0
+            final float dozeScaleFactor = resources.getFraction(
+                    com.android.internal.R.fraction.config_screenAutoBrightnessDozeScaleFactor,
+                    1, 1);// 100%
+ 
+            Spline screenAutoBrightnessSpline = createAutoBrightnessSpline(lux, screenBrightness);
+            if (screenAutoBrightnessSpline == null) {
+                Slog.e(TAG, "Error in config.xml.  config_autoBrightnessLcdBacklightValues "
+                        + "(size " + screenBrightness.length + ") "
+                        + "must be monotic and have exactly one more entry than "
+                        + "config_autoBrightnessLevels (size " + lux.length + ") "
+                        + "which must be strictly increasing.  "
+                        + "Auto-brightness will be disabled.");
+                mUseSoftwareAutoBrightnessConfig = false;
+            } else {
+                int bottom = clampAbsoluteBrightness(screenBrightness[0]);
+                if (mScreenBrightnessDarkConfig > bottom) {
+                    Slog.w(TAG, "config_screenBrightnessDark (" + mScreenBrightnessDarkConfig
+                            + ") should be less than or equal to the first value of "
+                            + "config_autoBrightnessLcdBacklightValues ("
+                            + bottom + ").");
+                }
+                if (bottom < screenBrightnessRangeMinimum) {
+                    screenBrightnessRangeMinimum = bottom;
+                }
+                mAutomaticBrightnessController = new AutomaticBrightnessController(this,
+                        handler.getLooper(), sensorManager, screenAutoBrightnessSpline,
+                        lightSensorWarmUpTimeConfig, screenBrightnessRangeMinimum,
+                        mScreenBrightnessRangeMaximum, dozeScaleFactor, lightSensorRate,
+                        brighteningLightDebounce, darkeningLightDebounce,
+                        autoBrightnessResetAmbientLuxAfterWarmUp,
+                        ambientLightHorizon, autoBrightnessAdjustmentMaxGamma);
+            }
+        }
+        mScreenBrightnessRangeMinimum = screenBrightnessRangeMinimum;
+        mColorFadeFadesConfig = resources.getBoolean(
+                com.android.internal.R.bool.config_animateScreenLights);// false
+        if (!DEBUG_PRETEND_PROXIMITY_SENSOR_ABSENT) {
+            mProximitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+            if (mProximitySensor != null) {
+                mProximityThreshold = Math.min(mProximitySensor.getMaximumRange(),
+                        TYPICAL_PROXIMITY_THRESHOLD);
+            }
+        }
+    }
+这里用到了clampAbsoluteBrightness()方法，看下是什么意思吧。
+
+    private static int clampAbsoluteBrightness(int value) {
+        return MathUtils.constrain(value, PowerManager.BRIGHTNESS_OFF, PowerManager.BRIGHTNESS_ON);
+    }
+这里注意下MathUtils.constrain()表示百分比缩放函数，比如MathUtils.constrain(0.5, 0, 255)表示（255-0）*0.5。
+我们发现构造方法中并没有特殊的一些功能，简单说下各个参数的大概作用吧。
+
+mBatteryStat：设置屏幕亮度的时候，更新电池电量；
+
+mSensorManager：获取Lsensor来调节背光；
+
+mWindowManagerPolicy：亮屏时调用到window绘制屏幕；
+
+mBlanker：亮屏以及设置背光时调用到DisplayPowerState的中介类对象；
+
+mScreenBrightnessDozeConfig：Doze状态配置亮度；
+
+mScreenBrightnessDimConfig：暗屏状态配置亮度；
+
+mScreenBrightnessDarkConfig：黑屏状态配置亮度；
+
+mScreenBrightnessRangeMaximum：屏幕最大亮度；
+
+screenBrightnessRangMinimum：屏幕最小亮度；
+
+mUseSoftwareAutoBrightnessConfig：是否支持自动亮度；
+
+lightSensorWarmUpTimeConfig：Lsensor启动时间，0；
+
+screenAutoBrightnessSpline：光照/背光mapping对应值；
+
+lightSensorRate：sensor采集数据频率250；
+
+brighteningLightDebounce：变亮防抖时间 2000；
+
+darkeningLightDebounce：变暗防抖时间 4000；
+
+autoBrightnessResetAmbientLuxAfterWarmUp：当sensor启动时重置环境光照值；
+
+ambientLightHorizon：环境光照采集时间阀值，10000；
+
+autoBrightnessAdjustmentMaxGamma：最大gamma值。
+
+在初始化之后要重点说下screenAutoBroghtnessSpline，该参数是通过方法createAutoBrightnessSpline()直接返回一个Spline对象，如下：
+
+    private static Spline createAutoBrightnessSpline(int[] lux, int[] brightness) {
+        if (lux == null || lux.length == 0 || brightness == null || brightness.length == 0) {
+            Slog.e(TAG, "Could not create auto-brightness spline.");
+            return null;
+        }
+        try {
+            final int n = brightness.length;
+            float[] x = new float[n];
+            float[] y = new float[n];
+            y[0] = normalizeAbsoluteBrightness(brightness[0]);
+            for (int i = 1; i < n; i++) {
+                x[i] = lux[i - 1];
+                y[i] = normalizeAbsoluteBrightness(brightness[i]);
+            }
+ 
+            Spline spline = Spline.createSpline(x, y);
+            if (DEBUG) {
+                Slog.d(TAG, "Auto-brightness spline: " + spline);
+                for (float v = 1f; v < lux[lux.length - 1] * 1.25f; v *= 1.25f) {
+                    Slog.d(TAG, String.format("  %7.1f: %7.1f", v, spline.interpolate(v)));
+                }
+            }
+            return spline;
+        } catch (IllegalArgumentException ex) {
+            Slog.e(TAG, "Could not create auto-brightness spline.", ex);
+            return null;
+        }
+    }
+这里继续看下lux和screenBrightness的配置值：
+    <integer-array name="config_autoBrightnessLevels">
+        <item>50</item>
+        <item>300</item>
+        <item>400</item>
+        <item>600</item>
+        <item>800</item>
+        <item>1000</item>
+        <item>1300</item>
+        <item>1600</item>
+        <item>2000</item>
+        <item>3000</item>
+        <item>4000</item>
+    </integer-array>
+    <integer-array name="config_autoBrightnessLcdBacklightValues">
+        <item>20</item>   <!-- 0-50 -->
+        <item>380</item>  <!-- 50-300 -->
+        <item>400</item>  <!-- 300-400 -->
+        <item>475</item>  <!-- 400-600 -->
+        <item>580</item>  <!-- 600-800 -->
+        <item>650</item>  <!-- 800-1000 -->
+        <item>750</item>  <!-- 1000-1300 -->
+        <item>820</item>  <!-- 1300-1600 -->
+        <item>1100</item> <!-- 1600-2000 -->
+        <item>1450</item> <!-- 2000-3000 -->
+        <item>1700</item> <!-- 3000-4000 -->
+        <item>2047</item> <!-- 4000+ -->
+    </integer-array>
+createAutoBrightnessSpline()方法的效果就是将环境光照lux值1~4000对应到屏幕亮度0~255的值上。由于各个硬件厂商的光感器件配置不同，因此源码上并未提供标准配置，有厂商自行在overlay上配置。
+
+由于亮屏之后屏幕自动亮度才会生效，所以在亮屏的时候，流程会走到DisplayPowerController中的核心函数updatePowerState()，在该函数中会调用AutomaticBrightnessController的configure()方法。
+
+        // Configure auto-brightness.
+        boolean autoBrightnessEnabled = false;
+        if (mAutomaticBrightnessController != null) {
+            final boolean autoBrightnessEnabledInDoze = mAllowAutoBrightnessWhileDozingConfig
+                    && (state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND);
+            autoBrightnessEnabled = mPowerRequest.useAutoBrightness
+                    && (state == Display.STATE_ON || autoBrightnessEnabledInDoze)
+                    && brightness < 0;
+            final boolean userInitiatedChange = autoBrightnessAdjustmentChanged
+                    && mPowerRequest.brightnessSetByUser;
+            mAutomaticBrightnessController.configure(autoBrightnessEnabled,
+                    mPowerRequest.screenAutoBrightnessAdjustment, state != Display.STATE_ON,
+                    userInitiatedChange, mPowerRequest.useTwilight);
+        }
+
+我们看下configure()方法，如下：
+    public void configure(boolean enable, float adjustment, boolean dozing,
+            boolean userInitiatedChange, boolean useTwilight) {
+        // While dozing, the application processor may be suspended which will prevent us from
+        // receiving new information from the light sensor. On some devices, we may be able to
+        // switch to a wake-up light sensor instead but for now we will simply disable the sensor
+        // and hold onto the last computed screen auto brightness.  We save the dozing flag for
+        // debugging purposes.dozing状态时，应用处理器可能会暂停，以便阻止从Lsensor接收新的数据；
+        mDozing = dozing;
+        boolean changed = setLightSensorEnabled(enable && !dozing);//设置Lsensor状态
+        changed |= setScreenAutoBrightnessAdjustment(adjustment);
+        changed |= setUseTwilight(useTwilight);
+        if (changed) {
+            updateAutoBrightness(false /*sendUpdate*/);
+        }
+        if (enable && !dozing && userInitiatedChange) {
+            prepareBrightnessAdjustmentSample();
+        }
+    }
+
+setLightSensorEnabled()方法将Lsensor置成enable状态mLightSensorEnabled，设置Lsensor enable时的时间mLightSensorEnabledTime，并注册监听Lsensor的listener：mLightSensorListener；setScreenAutoBrightnessAdjustment()方法设置屏幕自动亮度调节系数mScreenAutoBrightnessAdjustment；setUseTwilight()方法设置是否使用Twilight模式。
+当上面三种情况发生变化时，都会去更新自动亮度，但是这里传入的参数是false，则不会去更新到屏幕上。
+
+当上述条件满足之后，Lsensor采集到光照值，回调到Lsensor监听器mLightSensorListener的onSensorChanged()方法，在该方法中调用handleLightSensorEvent()方法，如下：
+
+    private final SensorEventListener mLightSensorListener = new SensorEventListener() {
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            if (mLightSensorEnabled) {
+                final long time = SystemClock.uptimeMillis();//记录当前时间
+                final float lux = event.values[0];//从sensor中取出光照值
+                
+                handleLightSensorEvent(time, lux);//处理Lsensor事件
+            }
+        }
+ 
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {
+            // Not used.
+        }
+    };
+
+当Lsensor变化的时候调用handleLightSensorEvent()方法，如下：
+    private void handleLightSensorEvent(long time, float lux) {
+        mHandler.removeMessages(MSG_UPDATE_AMBIENT_LUX);
+ 
+        applyLightSensorMeasurement(time, lux);
+        updateAmbientLux(time);
+    }
+
+在handleLightSensorEvent()方法中首先移除MSG_UPDATE_AMBIENT_LUX消息，接着调用applyLightSensorMeasurement()方法，之后调用updateAmbientLux()方法。其中lux用来保存Lsensor采集上来的环境光照值，time则是当前时间。首先看下applyLightSensorMeasurement()方法，如下：
+    private void applyLightSensorMeasurement(long time, float lux) {
+        mRecentLightSamples++;//Lsensor使能时，光样本采集的次数；
+        // Store all of the light measurements for the intial horizon period. This is to help
+        // diagnose dim wake ups and slow responses in b/27951906.//保存初始阶段光测量的所有值
+        if (time <= mLightSensorEnableTime + mAmbientLightHorizon) {
+            mInitialHorizonAmbientLightRingBuffer.push(time, lux);//保存Lsensor使能时，前10s的环境光照值
+        }
+        mAmbientLightRingBuffer.prune(time - mAmbientLightHorizon);//将最近11次检测到的环境光值存入数组中，11次之前的去掉。
+        mAmbientLightRingBuffer.push(time, lux);
+ 
+        // Remember this sample value.
+        mLastObservedLux = lux;//保存最近的光样本值
+        mLastObservedLuxTime = time;//保存最近光样本采集的时间
+    }
+可以看到在亮屏后，可是10s采集到的环境光线值复制给mInitialHorizonAmbientLightRingBuffer中，后面超过10s之后的环境光照采集值都会放到mAmbientLightRingBuffer中。prune()方法，保存最近11次的光线变化，每次时间变化都会将11次之前的光线值给剪裁掉。push()操作便是将最新的亮度值不断的送入mAmbientLightRingBuffer数组中。最后将最新的光照值保存到mLastObservedLux变量中，最近光样本采集时间保持到mLastObservedLuxTime变量中。
+接着看下updateAmbientLux()方法，如下：
+
+    private void updateAmbientLux(long time) {
+        // If the light sensor was just turned on then immediately update our initial
+        // estimate of the current ambient light level.Lsensor开启时，亮度需要立即适应当前环境光照来调整屏幕亮度。
+        if (!mAmbientLuxValid) {
+            final long timeWhenSensorWarmedUp =
+                mLightSensorWarmUpTimeConfig + mLightSensorEnableTime;//Lsensor使能时到Lsensor准备好的时间点
+            if (time < timeWhenSensorWarmedUp) {
+                if (DEBUG) {
+                    Slog.d(TAG, "updateAmbientLux: Sensor not  ready yet: "
+                            + "time=" + time
+                            + ", timeWhenSensorWarmedUp=" + timeWhenSensorWarmedUp);
+                }
+                mHandler.sendEmptyMessageAtTime(MSG_UPDATE_AMBIENT_LUX,
+                        timeWhenSensorWarmedUp);
+                return;
+            }
+            setAmbientLux(calculateAmbientLux(time));
+            mAmbientLuxValid = true;
+            if (DEBUG) {
+                Slog.d(TAG, "updateAmbientLux: Initializing: "
+                        + "mAmbientLightRingBuffer=" + mAmbientLightRingBuffer
+                        + ", mAmbientLux=" + mAmbientLux);
+            }
+            updateAutoBrightness(true);
+        }
+ 
+        long nextBrightenTransition = nextAmbientLightBrighteningTransition(time);
+        long nextDarkenTransition = nextAmbientLightDarkeningTransition(time);
+        float ambientLux = calculateAmbientLux(time);
+ 
+        if (ambientLux >= mBrighteningLuxThreshold && nextBrightenTransition <= time
+                || ambientLux <= mDarkeningLuxThreshold && nextDarkenTransition <= time) {
+            setAmbientLux(ambientLux);
+            if (DEBUG) {
+                Slog.d(TAG, "updateAmbientLux: "
+                        + ((ambientLux > mAmbientLux) ? "Brightened" : "Darkened") + ": "
+                        + "mBrighteningLuxThreshold=" + mBrighteningLuxThreshold
+                        + ", mAmbientLightRingBuffer=" + mAmbientLightRingBuffer
+                        + ", mAmbientLux=" + mAmbientLux);
+            }
+            updateAutoBrightness(true);
+            nextBrightenTransition = nextAmbientLightBrighteningTransition(time);
+            nextDarkenTransition = nextAmbientLightDarkeningTransition(time);
+        }
+        long nextTransitionTime = Math.min(nextDarkenTransition, nextBrightenTransition);
+        // If one of the transitions is ready to occur, but the total weighted ambient lux doesn't
+        // exceed the necessary threshold, then it's possible we'll get a transition time prior to
+        // now. Rather than continually checking to see whether the weighted lux exceeds the
+        // threshold, schedule an update for when we'd normally expect another light sample, which
+        // should be enough time to decide whether we should actually transition to the new
+        // weighted ambient lux or not.
+        nextTransitionTime =
+                nextTransitionTime > time ? nextTransitionTime : time + mLightSensorRate;
+        if (DEBUG) {
+            Slog.d(TAG, "updateAmbientLux: Scheduling ambient lux update for "
+                    + nextTransitionTime + TimeUtils.formatUptime(nextTransitionTime));
+        }
+        mHandler.sendEmptyMessageAtTime(MSG_UPDATE_AMBIENT_LUX, nextTransitionTime);
+    }
+
+mextBrightenTransition：下一次变亮的过渡时间；nextDarkenTransition：下一次变暗的过渡时间；mBrighteningLuxThreshold ：使屏幕变亮所需要的环境光照阈值，这个参数的计算是当前环境光照*1.1 ，当环境光照大于该数值的时候，屏幕才可能变亮。mDarkeningLuxThreshold ：使屏幕变暗所需要的环境光照阈值，这个参数的计算是当前环境光照*1. 2，当环境光照小于该数值的时候，屏幕才可能变暗。也就是当环境光照在当前环境光照的0.8~1.1倍数之间变化，屏幕维持在一个固定的亮度值上，这样做的原因是避免环境光照发生细微的变化，屏幕亮度就变化，这算是背光防抖的一种措施。
+看下nextAmbientLightBrighteningTransition()方法，如下：
+
+    private long nextAmbientLightBrighteningTransition(long time) {
+        final int N = mAmbientLightRingBuffer.size();
+        long earliestValidTime = time;
+        for (int i = N - 1; i >= 0; i--) {
+            if (mAmbientLightRingBuffer.getLux(i) <= mBrighteningLuxThreshold) {
+                break;
+            }
+            earliestValidTime = mAmbientLightRingBuffer.getTime(i);
+        }
+        return earliestValidTime + mBrighteningLightDebounceConfig;
+    }
+
+以上函数的作用是从mAmbientLightRingBuffer 循环环境光照lux数组里取出第一个大于变亮阈值的一项，取得其时间，
+
+加上变亮防抖时间mBrighteningLightDebounceConfig（这个在config.xml中可以配置的）。
+
+这里计算的是变亮的环境光照过渡时间。
+
+这里做的意义是，需要变亮的环境光照持续时间大于一个过渡时间nextBrightenTransition，才可以将屏幕亮度变亮。
+
+这样可以避免环境光照只是瞬间升高后马上回复（比如闪光灯），屏幕亮度马上跟着变亮。
+
+这也做算是一种防抖措施了，目的也是尽量在环境光照不发生大的变化时候也维持在同一水平。
+
+这里我们就可以理解这个方法的意义了，当前环境光照ambientLux大于变亮的环境光照阈值mBrighteningLuxThreshold，
+
+并且该环境光照持续的时间已经超过了变亮的过度时间，这时候就可以去调用该函数updateAutoBrightness(true)更新屏幕亮度了，
+
+并且在setAmbientLux中重新计算变亮或者变暗时环境光照的阈值，同时重新计算下一次变亮或者变暗的过渡时间。
+
+在updateAutoBrightness中更新屏幕亮度，这里分析该函数的计算流程。
+
+//当用户没有调整状态栏或者设置里的亮度条，
+
+那么传过来的参数mScreenAutoBrightnessAdjustment便等于0，但是大部用户都是调整过的。
+
+
+    private void updateAutoBrightness(boolean sendUpdate) {
+        if (!mAmbientLuxValid) {
+            return;
+        }
+ 
+        float value = mScreenAutoBrightnessSpline.interpolate(mAmbientLux);//从mScreenAutoBrightnessSpline中获取到当前环境光照mAmbientLux对应的屏幕亮度值与255的比值value。
+        float gamma = 1.0f;
+ 
+        if (USE_SCREEN_AUTO_BRIGHTNESS_ADJUSTMENT
+                && mScreenAutoBrightnessAdjustment != 0.0f) {
+            final float adjGamma = MathUtils.pow(mScreenAutoBrightnessAdjustmentMaxGamma,
+                    Math.min(1.0f, Math.max(-1.0f, -mScreenAutoBrightnessAdjustment)));//pow(x,y)求x的y次方。
+            gamma *= adjGamma;//计算gamma值，
+            if (DEBUG) {
+                Slog.d(TAG, "updateAutoBrightness: adjGamma=" + adjGamma);
+            }
+        }
+ 
+        if (mUseTwilight) {
+            TwilightState state = mTwilight.getLastTwilightState();
+            if (state != null && state.isNight()) {
+                final long duration = state.sunriseTimeMillis() - state.sunsetTimeMillis();
+                final long progress = System.currentTimeMillis() - state.sunsetTimeMillis();
+                final float amount = (float) Math.pow(2.0 * progress / duration - 1.0, 2.0);
+                gamma *= 1 + amount * TWILIGHT_ADJUSTMENT_MAX_GAMMA;
+                if (DEBUG) {
+                    Slog.d(TAG, "updateAutoBrightness: twilight amount=" + amount);
+                }
+            }
+        }
+ 
+        if (gamma != 1.0f) {
+            final float in = value;
+            value = MathUtils.pow(value, gamma);
+            if (DEBUG) {
+                Slog.d(TAG, "updateAutoBrightness: gamma=" + gamma
+                        + ", in=" + in + ", out=" + value);
+            }
+        }
+ 
+        int newScreenAutoBrightness =
+                clampScreenBrightness(Math.round(value * PowerManager.BRIGHTNESS_ON));//round()四舍五入，计算当前环境光照实际亮度值
+        if (mScreenAutoBrightness != newScreenAutoBrightness) {
+            if (DEBUG) {
+                Slog.d(TAG, "updateAutoBrightness: mScreenAutoBrightness="
+                        + mScreenAutoBrightness + ", newScreenAutoBrightness="
+                        + newScreenAutoBrightness);
+            }
+ 
+            mScreenAutoBrightness = newScreenAutoBrightness;
+            mLastScreenAutoBrightnessGamma = gamma;
+            if (sendUpdate) {
+                mCallbacks.updateBrightness();//回调到DisplayPowerController中更新亮度。
+            }
+        }
+    }
+mScreenAutoBrightnessAdjustment，当用户没有调整状态栏或设置里的亮度条时，该变量为0，但是大部分用户都调整过。
+至此，屏幕亮度自动更新的算法基本已经完成。
+
+下面，列出几点可调节的关键位置：
+
+1、gamma范围调节方法：
+
+device\zeusis\pollux\overlay\packages\apps\Settings\res\values\config.xml
+
+device\zeusis\pollux\overlay\frameworks\base\packages\SystemUI\journeyui_res\values\config.xml
+
+
+<fractionname="config_screenAutoBrightnessAdjMin">-10%</fraction>
+<fractionname="config_screenAutoBrightnessAdjMax">100%</fraction>
+guamma可以在两个文件中设置，如果修改的话，这两个文件要保持一致。
+
+2、le曲线关闭打开方法
+
+曲线添加的地方 frameworks\base\services\core\java\com\android\server\display\DisplayManagerService.java，搜索***-6355即可，
+
+主要关闭updateDisplayPowerStateLocked方法中的修改。
+
+3、step设置方法
+
+step变化的地方 frameworks\base\services\core\java\com\android\server\display\RampAnimator.java中的mAnimationCallback
+
+4、自动环境打开，系统设置中显示里亮度进度条默认位置的设置方法
+
+可以通过overlay的方式修改frameworks\base\packages\SettingsProvider\res\values\defaults.xml中的def_screen_auto_brightness_adj，
+
+该变量对应着Settings.System.SCREEN_AUTO_BRIGHTNESS_ADJ，表示进度条的默认位置。
+
+<!-- Default valueforSettings.System.SCREEN_AUTO_BRIGHTNESS_ADJ -->
+    <fractionname="def_screen_auto_brightness_adj">0%</fraction>
+5、变量变暗的等待时间设置方法
+变亮和变暗有两个值表示防抖时间，位置在frameworks\base\core\res\res\values\config.xml中
+
+    <integername="config_autoBrightnessBrighteningLightDebounce">2000</integer>
+    <integername="config_autoBrightnessDarkeningLightDebounce">4000</integer>
+6、背光曲线
+device/zeusis/pollux/overlay/frameworks/base/core/res/res/values/config.xml：config_autoBrightnessLevels config_autoBrightnessLcdBacklightValues，
+
+根据这两个数组，产生背光曲线。
+
+
+    <integer-arrayname="config_autoBrightnessLevels">
+       <item>50</item>
+       <item>300</item>
+       <item>400</item>
+       <item>600</item>
+       <item>800</item>
+       <item>1000</item>
+       <item>1300</item>
+       <item>1600</item>
+       <item>2000</item>
+       <item>3000</item>
+       <item>4000</item>
+    </integer-array>
+ 
+   <integer-arrayname="config_autoBrightnessLcdBacklightValues">
+       <item>20</item>  <!-- 0-50 -->
+       <item>380</item> <!--50-300 -->
+       <item>400</item> <!-- 300-400 -->
+       <item>475</item> <!-- 400-600 -->
+       <item>580</item> <!-- 600-800 -->
+       <item>650</item> <!-- 800-1000 -->
+       <item>750</item> <!-- 1000-1300 -->
+       <item>820</item> <!-- 1300-1600 -->
+       <item>1100</item><!-- 1600-2000 -->
+       <item>1450</item><!-- 2000-3000 -->
+       <item>1700</item><!-- 3000-4000 -->
+       <item>2047</item><!-- 4000+ -->
+我们在看下系统设置中开启自动亮度调节时，亮度进度条的逻辑，
+
+处理逻辑在packages/apps/Settings/src/com/android/settings/BrightnessSeekBarPreference.java文件中。
+
+
+    private void updateSeekbar() {
+        if(mSeekBar == null) return;
+        if (mAutomatic) {
+            float value = Settings.System.getFloatForUser(mContext.getContentResolver(),
+                    Settings.System.SCREEN_AUTO_BRIGHTNESS_ADJ, 0,
+                    UserHandle.USER_CURRENT);
+            mSeekBar.setMax((int) BRIGHTNESS_ADJ_RESOLUTION);
+            //*/ get auto brightness adj based on config
+            float fValue = (value - mAutoBrightnessAdjMin)*(BRIGHTNESS_ADJ_RESOLUTION*1f) /(mAutoBrightnessAdjMax - mAutoBrightnessAdjMin);
+            mSeekBar.setProgress((int) fValue);
+            /*/
+            mSeekBar.setProgress((int) ((value + 1) * BRIGHTNESS_ADJ_RESOLUTION / 2f));
+            //*/
+        } else {
+            int value;
+            value = Settings.System.getIntForUser(mContext.getContentResolver(),
+                    Settings.System.SCREEN_BRIGHTNESS, mMaximumBacklight,
+                    UserHandle.USER_CURRENT);
+            mSeekBar.setMax(mMaximumBacklight - mMinimumBacklight);
+            mSeekBar.setProgress(value);
+        }
+    }
+在updateSeekbar()方法中如果开启了自动亮度调节，if语句成立，
+
+在if语句中获取的value值就是Settings.System.SCREEN_AUTO_BRIGHTNESS_ADJ的值，
+
+表示进度条的默认位置，调用SeekBar的setProgress()方法设置进度条的位置。
