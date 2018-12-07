@@ -9,12 +9,6 @@ tags:
     - Android
 ---
 
-android开发中Wifi功能总结
-2018年01月25日 16:30:12 yourzeromax 阅读数：7777 标签： Android wifi 定位  更多
-个人分类： 技术分享
-版权声明：本文为博主原创文章，欢迎大家转载并注明出处	https://blog.csdn.net/qq_34773981/article/details/79163579
-写在前面
-距离上次写博客还是在几个月以前了，最近几个月实在是太忙了，跑去做课设和ios开发，短暂地告别了Android，直到最近在某院实习做毕业设计时需要用到Android系统进行室内定位开发，本文主要是将在项目开发的过程中遇到的关于wifi开发的问题记录下来，方便大家整理。
 #情景提要
 Android开发过程中，应该说Wifi是很重要的一个功能，在产品中，可能需要随时监听网络状况的变化等等，最近的项目是做室内定位，需要采集各种Wifi的信号和其距离，算出一个大概的范围再结合其他的技术手段进行信息融合得到精确的定位数据，其实个人对wifi一次定位是不抱太大希望的，因为wifi信号的衰减和硬件、环境、空间等等随机因素有关，是及其不准确的，但是项目既然有这个内容，也应当仔细地去研究研究，之前看过网上很多资料，发现大家只是单纯地谈API，对新手很不友好，因此我也想换一个角度来描述一下android Wifi开发，首先我总结以下几个问题：
 
@@ -43,21 +37,70 @@ wifi的权限管理
 
 WIFI开发所关心的三个类和功能描述：
 
-类名	功能
-WifiManager	wifi统一管理类，进行各种wifi操作
-WifiInfo	描述当前连接的wifi热点信息
-WifiConfiguration	wifi网络配置信息
-除此之外还有一个类：
+<table>
+<thead>
+<tr>
+<th>类名</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>WifiManager</td>
+<td>wifi统一管理类，进行各种wifi操作</td>
+</tr>
+<tr>
+<td>WifiInfo</td>
+<td>描述当前连接的wifi热点信息</td>
+</tr>
+<tr>
+<td>WifiConfiguration</td>
+<td>wifi网络配置信息</td>
+</tr>
+</tbody>
+</table>
 
-类名	功能
-ScanResult	描述扫描出的wifi热点的信息
-以上的（3+1）个类是关乎各种wifi操作的最为重要的类，还有以下四个专业术语再帮助大家巩固以下：
+<table>
+<thead>
+<tr>
+<th>类名</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ScanResult</td>
+<td>描述扫描出的wifi热点的信息</td>
+</tr>
+</tbody>
+</table>
 
-名称	功能
-SSID	描述wifi热点的名称，就是大家搜索到的直接名称，如ChinaNet
-BSSID	姑且理解成热点的mac地址，但实际有所不同
-networkID	数字型的id
-RSSI	描述wifi信号强弱的值，官方叫做level
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SSID</td>
+<td>描述wifi热点的名称，就是大家搜索到的直接名称，如ChinaNet</td>
+</tr>
+<tr>
+<td>BSSID</td>
+<td>姑且理解成热点的mac地址，但实际有所不同</td>
+</tr>
+<tr>
+<td>networkID</td>
+<td>数字型的id</td>
+</tr>
+<tr>
+<td>RSSI</td>
+<td>描述wifi信号强弱的值，官方叫做level</td>
+</tr>
+</tbody>
+</table>
 这里说一个很重要的知识点！！！可以脑补一下手机输入wifi密码连上后，下一次可以不用输入密码甚至是自动连接，就是因为手机中其实已经存储了wifi的信息，而这一个个wifi信息可以看作是一个以networkid为标识存储在手机上的队列（之后会介绍）。当然，手机查看wifi的具体信息（如wifi密码）是需要root权限的，大家就别瞎搞了（小米手机有分享密码二维码的功能）。
 
 ##如何开关设备的wifi功能
@@ -76,27 +119,21 @@ boolean isOpen=mWifiManager.setWifiEnabled(true);
 wifi状态的改变是会导致广播事件的发生，但是实际上对于上部分的问题没有必要用广播，因此这部分我先介绍代码判断，再介绍广播事件的使用方法。
 ###代码监听连接状态：
 WifiManager之中有当前状态的enum类型，可以看下表：
-名称 | 值 |描述
--------- | —
-WIFI_STATE_DISABLING | 0|wifi正在关闭
-WIFI_STATE_DISABLED | 1|wifi关闭
-WIFI_STATE_ENABLING | 2|wifi正在开启
-WIFI_STATE_ENABLED | 3|wifi开启
-WIFI_STATE_UNKNOWN | 4|wifi未知
+
 在一般的状态监听，可以直接通过WifiManager对象来获取,再进行相应的判断就可以满足，看下面的代码：
 
-mWifiManager.setWifiEnabled(true);
-        if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_DISABLING) {
-            //do someThing;
-        } else if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_DISABLED) {
-            //do someThing;
-        } else if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_ENABLING) {
-            //do someThing;
-        } else if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_ENABLED) {
-            //do someThing;
-        } else if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_UNKNOWN) {
-            //do someThing;
-        }
+    mWifiManager.setWifiEnabled(true);
+            if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_DISABLING) {
+                //do someThing;
+            } else if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_DISABLED) {
+                //do someThing;
+            } else if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_ENABLING) {
+                //do someThing;
+            } else if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_ENABLED) {
+                //do someThing;
+            } else if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_UNKNOWN) {
+                //do someThing;
+            }
 
 ###使用广播事件监听wifi状态的改变
 wifi状态的变化会发出下列的广播事件：
@@ -108,27 +145,27 @@ WifiManager.SUPPLICANT_STATE_CHANGED_ACTION	wifi连接结果通知
 WifiManager.NETWORK_STATE_CHANGED_ACTION	网络状态变化通知
 采用广播事件来进行监听的话，就可以做很多事情，可以通过查看上表描述得知各个广播事件的作用，这里的话，还是以wifi开关变化通知广播为例进行说明，广播是自动发出的，因此，我们只需要注册相应的BroadCastReceiver就可以了，具体看下文的代码：
 
-    class WifiBroadCastReceiver extends BroadcastReceiver {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            switch (intent.getAction()) {
-                case WifiManager.WIFI_STATE_CHANGED_ACTION:
-                    int wifiState = intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE,
-                            WifiManager.WIFI_STATE_DISABLED);
-                    switch (wifiState) {
-                        case WifiManager.WIFI_STATE_DISABLED:
-                            doSomething();
-                            break;
-                        case WifiManager.WIFI_STATE_ENABLED:
-                            doSomething();
-                            break;
-                    }
-                    break;
-                case WifiManager.SCAN_RESULTS_AVAILABLE_ACTION:
-                    break;
+        class WifiBroadCastReceiver extends BroadcastReceiver {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                switch (intent.getAction()) {
+                    case WifiManager.WIFI_STATE_CHANGED_ACTION:
+                        int wifiState = intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE,
+                                WifiManager.WIFI_STATE_DISABLED);
+                        switch (wifiState) {
+                            case WifiManager.WIFI_STATE_DISABLED:
+                                doSomething();
+                                break;
+                            case WifiManager.WIFI_STATE_ENABLED:
+                                doSomething();
+                                break;
+                        }
+                        break;
+                    case WifiManager.SCAN_RESULTS_AVAILABLE_ACTION:
+                        break;
+                }
             }
         }
-    }
 
 当然，别忘了创建自定义Receiver对象并注册到context中，略。
 
@@ -139,16 +176,12 @@ WifiManager.NETWORK_STATE_CHANGED_ACTION	网络状态变化通知
 
 wifi扫描运用到的类就是ScanResult类，每一个被扫描到的wifi的信息几乎都会存在这个类的对象之中，换言之，我们获取一些基本信息就是要通过ScanResult对象：
 
- mWifiManager.startScan();
-List<ScanResult> Results = mWifiManager.getScanResults();
- for (ScanResult Result : Results) {
-       Log.d(TAG, "wifi结果: " + Result.SSID + "  RSSI:" + Result.level + "  Time：" + System.currentTimeMillis());
-        }
-1
-2
-3
-4
-5
+    mWifiManager.startScan();
+    List<ScanResult> Results = mWifiManager.getScanResults();
+    for (ScanResult Result : Results) {
+        Log.d(TAG, "wifi结果: " + Result.SSID + "  RSSI:" + Result.level + "  Time：" + System.currentTimeMillis());
+            }
+
 一句简单的代码就能开启扫描，第一行代码是让设备开始扫描第二行代码是获取扫描结果，我建议大家最好是在广播通知中进行结果处理，它返回的是一个List列表，之后的话，可以遍历List中的对象读取相关的信息，具体的信息获取方法也是一目了然，不再赘述。
 
 提醒（坑）：getScanResults（）返回的队列是累计的！这句话大家好好理解。
@@ -157,14 +190,14 @@ List<ScanResult> Results = mWifiManager.getScanResults();
 
 如何获取已经在设备上配置过的wifi：
 
-List<WifiConfiguration> configurations = mWifiManager.getConfiguredNetworks();
-1
+    List<WifiConfiguration> configurations = mWifiManager.getConfiguredNetworks();
+
 返回的仍然是一个List列表，存储的对象是WifiConfiguration，在开始就描述过这个类，它所存储的就是设备之前连接过的所有wifi热点的信息，同样的，可以通过遍历它的实例来获取wifi热点的信息，其中SSID和networkId一定是存在的，BSSID，password这些是null的，这点一定要注意，具体代码就不贴了。
 
 如何获取当前wifi的连接信息：
 
-WifiInfo info = mWifiManager.getConnectionInfo();
-1
+    WifiInfo info = mWifiManager.getConnectionInfo();
+
 几乎和WifiConfiguration一样的，但是如果当前没有连接wifi的话，就会返回Null，它包括了SSID、networkId、BSSID的，切记一个问题：它的SSID是带双引号的，这点和ScanResult对象不一样哟！
 
 ###连接/断开热点
@@ -176,7 +209,7 @@ WifiInfo info = mWifiManager.getConnectionInfo();
 断开热点
 这里我就偷一个懒了，直接摘选网上的代码了，因为我觉得这代码的作者已经写的很好了：
 
-public WifiConfiguration createConfiguration(AccessPoint ap) {
+    public WifiConfiguration createConfiguration(AccessPoint ap) {
         String SSID = ap.getSsid();
         WifiConfiguration config = new WifiConfiguration();
         config.SSID = "\"" + SSID + "\"";
@@ -215,15 +248,15 @@ public WifiConfiguration createConfiguration(AccessPoint ap) {
 
 再然后就是连接了：
 
-wifiManager.enableNetwork(networkId, true)
-1
+    wifiManager.enableNetwork(networkId, true)
+
 如果要连接已经存储过的wifi，就可以直接获取WifiConfigruation对象中的networkId进行连接，networkId在一台设备之中，是唯一的。
 
 当然，不管你输入的密码正确或错误，该wifi连上或者未连上，都会发送广播事件进行通知，也可以在广播事件中进行相应的处理，忘记了广播类型的同学，可以翻看前文。
 
 最后就是断开连接，很简单的一句：
 
-mWifiManager.disconnect();
+    mWifiManager.disconnect();
 
 至此，wifi的基础讲述完毕。
 
