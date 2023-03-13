@@ -1,0 +1,25 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "phonetracker.locationtracker.gpstracker.familylocator",
+    "sha256_cert_fingerprints":
+    ["A6:BD:C1:A2:BD:DF:9A:3C:40:39:F1:BF:EA:EC:8A:FA:F9:EE:2B:54:F3:9F:6F:42:79:98:2B:74:4F:90:2F:7F"]
+  }
+},
+{
+  "relation": ["delegate_permission/common.get_login_creds"],
+  "target": {
+    "namespace": "web",
+    "site": "https://codwb.github.io"
+  }
+},
+{
+  "relation": ["delegate_permission/common.get_login_creds"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "phonetracker.locationtracker.gpstracker.familylocator",
+    "sha256_cert_fingerprints":
+    ["A6:BD:C1:A2:BD:DF:9A:3C:40:39:F1:BF:EA:EC:8A:FA:F9:EE:2B:54:F3:9F:6F:42:79:98:2B:74:4F:90:2F:7F"]
+  }
+}]
